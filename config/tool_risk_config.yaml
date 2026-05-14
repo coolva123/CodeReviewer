@@ -1,0 +1,37 @@
+# 工具风险等级定义
+# LOW   — 直接执行，无需确认
+# MEDIUM — 执行前写日志
+# HIGH  — 暂停并要求用户输入 y/n
+
+tools:
+  read_file:
+    risk: LOW
+    description: 读取本地文件内容
+
+  search_files:
+    risk: LOW
+    description: 搜索文件路径或内容
+
+  run_bandit:
+    risk: LOW
+    description: 对目标路径运行 bandit 静态安全扫描
+
+  run_pylint:
+    risk: LOW
+    description: 对目标路径运行 pylint 代码质量扫描
+
+  write_file:
+    risk: MEDIUM
+    description: 写入或修改本地文件
+
+  post_github_comment:
+    risk: MEDIUM
+    description: 向 GitHub PR 发布评论
+
+  run_shell_command:
+    risk: HIGH
+    description: 执行任意 shell 命令
+
+  run_in_docker:
+    risk: HIGH
+    description: 在 Docker 容器内执行命令
