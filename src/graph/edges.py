@@ -1,29 +1,22 @@
-from typing import Literal
-
 from .state import ReviewState
 
 
-def route_after_coordinator(state: ReviewState) -> Literal["diff_analyzer", "__end__"]:
-    """Coordinator 决定是否继续审查流程。"""
-    if state.get("errors") and not state.get("diff_content"):
-        return "__end__"
-    return "diff_analyzer"
-
-
-def route_after_diff_analyzer(
-    state: ReviewState,
-) -> list[Literal["security_reviewer", "quality_reviewer"]]:
+def route_after_coordinator(state: ReviewState) -> list[str]:
     """
-    Diff 分析完成后 fan-out 到 Reviewer。
-    Coordinator 的 routing_decision 可以决定跳过某个 Reviewer。
-    返回列表让 LangGraph 并行触发多个节点（Send API 替代方案）。
+    Coordinator 完成后的 fan-out 路由。
+    返回列表时 LangGraph 并行触发所有目标节点。
     """
     decision = state.get("routing_decision", {})
-    targets = []
 
+    # diff 为空且有错误时提前终止
+    if not state.get("diff_files") and state.get("errors"):
+        return ["__end__"]
+
+    targets = []
     if decision.get("run_security", True):
         targets.append("security_reviewer")
     if decision.get("run_quality", True):
         targets.append("quality_reviewer")
 
+    # 两者都不需要（纯文档/测试变更）时直接生成报告
     return targets if targets else ["report_generator"]

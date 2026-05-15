@@ -7,7 +7,7 @@ load_dotenv()
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 # ── LLM 选择 ─────────────────────────────────────────────────────────────────
-# 可选值: "deepseek" | "zhipu" | "openai"
+# 可选值: "deepseek" | "zhipu" | "openai" | "anthropic"
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "deepseek")
 LLM_MODEL    = os.getenv("LLM_MODEL", "deepseek-v4-pro")
 
@@ -20,14 +20,21 @@ ZHIPU_API_KEY       = os.getenv("ZHIPU_API_KEY", "")
 ZHIPU_BASE_URL      = os.getenv("ZHIPU_BASE_URL", "https://open.bigmodel.cn/api/paas/v4/")
 ZHIPU_EMBED_MODEL   = os.getenv("ZHIPU_EMBED_MODEL", "embedding-3")
 
-# OpenAI（备用）
+# OpenAI
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+
+# Anthropic Claude
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 
 # GitHub
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
 
-# ChromaDB
-CHROMA_PERSIST_DIR = os.getenv("CHROMA_PERSIST_DIR", str(BASE_DIR / "data" / "chroma"))
+# PostgreSQL + pgvector（长期记忆）
+PG_DATABASE_URL = os.getenv(
+    "PG_DATABASE_URL",
+    "postgresql://postgres:postgres@localhost:15432/postgres",
+)
+PG_EMBEDDING_DIM = int(os.getenv("PG_EMBEDDING_DIM", "2048"))
 
 # LangGraph checkpointing
 CHECKPOINT_DB_PATH = str(BASE_DIR / "data" / "checkpoints.db")
@@ -69,10 +76,20 @@ def get_llm(temperature: float = 0.1):
             temperature=temperature,
         )
 
+    elif LLM_PROVIDER == "anthropic":
+        if not ANTHROPIC_API_KEY:
+            raise ValueError("ANTHROPIC_API_KEY is not set in .env")
+        from langchain_anthropic import ChatAnthropic
+        return ChatAnthropic(
+            model=LLM_MODEL,
+            api_key=ANTHROPIC_API_KEY,
+            temperature=temperature,
+        )
+
     else:
         raise ValueError(
             f"Unsupported LLM_PROVIDER: '{LLM_PROVIDER}'. "
-            "Choose from: deepseek, zhipu, openai"
+            "Choose from: deepseek, zhipu, openai, anthropic"
         )
 
 

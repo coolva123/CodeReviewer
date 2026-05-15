@@ -1,36 +1,108 @@
 """
 Tool Guard：工具执行保护层 + HITL（Human-in-the-Loop）。
-Day 4 完整实现，此文件为占位骨架。
+
+风险分级：
+  LOW    — 直接执行
+  MEDIUM — 记录日志后执行
+  HIGH   — 打印确认提示，等待用户 y/n；非交互模式下自动批准
 """
+import json
 import logging
-from typing import Any, Callable
+import sys
+from pathlib import Path
+from typing import Any
+
+import yaml
+
+from src.graph.state import ToolCallRecord
+from src.harness.memory.short_term import make_tool_record
 
 logger = logging.getLogger(__name__)
 
-RISK_LEVELS = {"LOW", "MEDIUM", "HIGH"}
+_RISK_CONFIG_PATH = Path(__file__).resolve().parent.parent.parent / "config" / "tool_risk_config.yaml"
+_risk_cache: dict[str, str] = {}
+
+
+def _load_risk_config() -> dict[str, str]:
+    global _risk_cache
+    if _risk_cache:
+        return _risk_cache
+    with open(_RISK_CONFIG_PATH, "r", encoding="utf-8") as f:
+        raw = yaml.safe_load(f)
+    _risk_cache = {name: info["risk_level"] for name, info in raw.get("tools", {}).items()}
+    return _risk_cache
+
+
+def get_risk_level(tool_name: str) -> str:
+    """返回工具的风险等级，未配置的工具默认为 MEDIUM。"""
+    return _load_risk_config().get(tool_name, "MEDIUM")
 
 
 def guarded_call(
-    tool_fn: Callable,
+    tool_fn,
     tool_name: str,
-    risk_level: str,
     args: dict[str, Any],
-) -> Any:
+) -> tuple[Any, ToolCallRecord]:
     """
-    根据风险等级决定执行策略：
-    - LOW   : 直接执行
-    - MEDIUM: 记录日志后执行
-    - HIGH  : 暂停并要求用户确认（Day 4 实现）
+    执行工具并按风险等级控制行为。
+    返回 (result, ToolCallRecord)。
+    当用户拒绝高风险工具时，result 为 None。
     """
-    if risk_level not in RISK_LEVELS:
-        raise ValueError(f"Unknown risk_level: {risk_level}")
+    risk_level = get_risk_level(tool_name)
 
     if risk_level == "HIGH":
-        # Day 4: 实现真正的 HITL 暂停
-        logger.warning("[ToolGuard] HIGH-RISK tool '%s' — HITL not yet implemented, skipping", tool_name)
-        return None
+        approved = _prompt_user(tool_name, args)
+        if not approved:
+            logger.warning("[ToolGuard] HIGH-RISK tool '%s' rejected by user", tool_name)
+            record = make_tool_record(tool_name, risk_level, args, result="[REJECTED BY USER]", approved=False)
+            return None, record
+        logger.info("[ToolGuard] HIGH-RISK tool '%s' approved by user", tool_name)
+    elif risk_level == "MEDIUM":
+        logger.info("[ToolGuard] MEDIUM-RISK tool '%s' | args_keys=%s", tool_name, list(args.keys()))
 
-    if risk_level == "MEDIUM":
-        logger.info("[ToolGuard] MEDIUM-RISK tool '%s' executing with args=%s", tool_name, args)
+    try:
+        result = tool_fn.invoke(args)
+        result_str = str(result)
+        record = make_tool_record(tool_name, risk_level, args, result=result_str[:500], approved=True)
+        logger.info(
+            "[ToolGuard] '%s' completed | risk=%s | output_len=%d",
+            tool_name, risk_level, len(result_str),
+        )
+        return result, record
+    except Exception as exc:
+        logger.error("[ToolGuard] Tool '%s' execution error: %s", tool_name, exc)
+        record = make_tool_record(tool_name, risk_level, args, result=f"ERROR: {exc}", approved=True)
+        return None, record
 
-    return tool_fn(**args)
+
+def _prompt_user(tool_name: str, args: dict[str, Any]) -> bool:
+    """终端 HITL 确认提示。非交互模式下自动批准。"""
+    print("\n" + "=" * 60, flush=True)
+    print("[ToolGuard]  HIGH-RISK TOOL EXECUTION REQUEST", flush=True)
+    print(f"  Tool   : {tool_name}", flush=True)
+    print(f"  Args   : {_fmt_args(args)}", flush=True)
+    print(f"  Reason : This tool spawns a subprocess on your system.", flush=True)
+    print("=" * 60, flush=True)
+
+    if not sys.stdin.isatty():
+        print("[ToolGuard] Non-interactive mode — auto-approving.", flush=True)
+        return True
+
+    while True:
+        try:
+            answer = input("  Approve execution? [y/n]: ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            return False
+        if answer in ("y", "yes"):
+            return True
+        if answer in ("n", "no"):
+            return False
+        print("  Please enter 'y' or 'n'.", flush=True)
+
+
+def _fmt_args(args: dict[str, Any]) -> str:
+    parts = []
+    for k, v in args.items():
+        v_str = str(v)
+        parts.append(f"{k}={v_str[:80]}{'...' if len(v_str) > 80 else ''}")
+    return ", ".join(parts)
